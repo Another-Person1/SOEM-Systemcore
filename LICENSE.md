@@ -7,7 +7,7 @@ This is an **unofficial** fork and has **no affiliation to** RT-Labs, outside of
 **All third party trademarks belong to their respective owners and I do not claim ownership of them.**
 
 ### Daemon and EC Dashboard
-* Copyright (C) 2026-present [me]
+* Copyright (C) 2026-present Another-Person1
 
 This software is licensed under GPLv3: [GNU GPL license v3](https://www.gnu.org/licenses/gpl-3.0.html)
 
