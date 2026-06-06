@@ -1,6 +1,6 @@
 # License
 
-This is an **unofficial** fork and has **no affiliation to** RT-Labs, outside of using Simple Open EtherCAT Master Library under GPLv3.
+This is an **unofficial** fork and has **no affiliation with** RT-Labs and other original SOEM contributors and copyright holders, outside of using Simple Open EtherCAT Master Library under GPLv3.
 
 **No commercial licensing nor commercial support** will be provided for this fork.
 
