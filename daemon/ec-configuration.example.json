@@ -1,0 +1,19 @@
+{
+  "allow_restricted_interfaces": false,
+  "cycle_period_us": 5000,
+  "nt4_server": "",
+  "nt4_team": 0,
+  "log_directory": "/var/log/limelight-ethercat",
+  "interfaces": [
+    {
+      "logical_name": "LEDs",
+      "physical_interface": "eth1",
+      "enabled": true
+    },
+    {
+      "logical_name": "Swerve",
+      "physical_interface": "enp3s1",
+      "enabled": true
+    }
+  ]
+}
