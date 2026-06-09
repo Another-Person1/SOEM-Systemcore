@@ -2,7 +2,8 @@
 > [!NOTE]
 > * This is **unofficial**, very **experimental**, and **not finished**. As of now, the prepackaged .ipk isn't completed yet.
 > * I **don't claim ownership** of any third party trademarks or copyright mentioned here.
-> * This repo will be optimized for the Limelight Systemcore, potentially other platforms might work but it's not guaranteed.
+> * This repo will be optimized for the Limelight Systemcore, potentially other RPi 5 platforms might work but it's not guaranteed and thats not a priority.
+> * **The code here isn't compatible with legacy platforms** such as RoboRIO 1/2, Control Hub, or other legacy platforms.
 
 > [!WARNING]
 > For now, **I don't recommend using this for anything safety-critical** since this project is in an alpha stage.
