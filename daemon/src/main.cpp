@@ -38,8 +38,10 @@
 #include <cmath>
 #include <cinttypes>
 #include <cstdint>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <cctype>
 #include <cstring>
 #include <deque>
 #include <fstream>
@@ -59,12 +61,9 @@
 namespace limelight_ec {
 namespace {
 
-constexpr const char* kConfigPath = "/etc/ec-configuration/ec-configuration.json";
+constexpr const char* kConfigPath = "/etc/ethercat/ec-configuration.json";
 constexpr const char* kSocketPath = "/var/run/ethercat_maindevice.sock";
-constexpr const char* kLogDirectory = "/var/log/limelight-ethercat";
-constexpr uint32_t kIpcMagic = 0x4C4C4543U;
-constexpr uint16_t kIpcVersion = 1;
-constexpr size_t kIpcMaxPayloadBytes = 8192;
+constexpr const char* kLogDirectory = "/var/log/ethercat";
 constexpr int64_t kDefaultCyclePeriodUs = 5000;
 constexpr int kSubDeviceMonitorTimeoutUs = 500;
 
@@ -113,6 +112,8 @@ struct DaemonConfig {
   std::string nt4Server;
   int nt4Team = 0;
   std::string logDirectory = kLogDirectory;
+  int64_t logCountLimit = 10;
+  int64_t freeSpaceThresholdMb = 50;
 };
 
 struct SubDeviceSnapshot {
@@ -130,6 +131,10 @@ struct RuntimeSnapshot {
   double cpuUtilization = 0.0;
   double maxCycleJitterUs = 0.0;
   bool preemptRtAvailable = false;
+  std::string activePhysicalInterface;
+  std::string activeLogicalInterface;
+  uint16_t activeFaults = 0;
+  uint32_t lostFrames = 0;
 };
 
 uint64_t MonotonicMicros() {
@@ -144,8 +149,23 @@ std::string TimestampForFile() {
   tm tmValue{};
   localtime_r(&now, &tmValue);
   std::ostringstream stream;
-  stream << std::put_time(&tmValue, "%Y%m%d-%H%M%S");
+  stream << std::put_time(&tmValue, "%Y%m%d_%H%M%S");
   return stream.str();
+}
+
+std::string WpiLogFileName(const std::string& matchName = std::string()) {
+  std::string sanitizedMatch;
+  for (char ch : matchName) {
+    if (std::isalnum(static_cast<unsigned char>(ch)) || ch == '_' ||
+        ch == '-') {
+      sanitizedMatch.push_back(ch);
+    }
+  }
+  if (!sanitizedMatch.empty()) {
+    return "ec_log_" + TimestampForFile().substr(0, 8) + "_" +
+           sanitizedMatch + ".wpilog";
+  }
+  return "ec_log_" + TimestampForFile() + ".wpilog";
 }
 
 void AddMicros(timespec* ts, int64_t micros) {
@@ -242,10 +262,18 @@ DaemonConfig LoadConfig(const std::string& path) {
   config.nt4Server = root.stringValue("nt4_server", "");
   config.nt4Team = static_cast<int>(root.integerValue("nt4_team", 0));
   config.logDirectory = root.stringValue("log_directory", kLogDirectory);
+  config.logCountLimit =
+      std::max<int64_t>(1, root.integerValue("log_count_limit", 10));
+  config.freeSpaceThresholdMb =
+      std::max<int64_t>(0, root.integerValue("free_space_threshold_mb", 50));
 
-  const Json* interfaces = root.find("interfaces");
+  const Json* interfaces = root.find("interface_mappings");
+  if (interfaces == nullptr) {
+    interfaces = root.find("interfaces");
+  }
   if (interfaces == nullptr || !interfaces->isArray()) {
-    throw std::runtime_error("configuration must contain an interfaces array");
+    throw std::runtime_error(
+        "configuration must contain an interface_mappings array");
   }
 
   std::set<std::string> logicalNames;
@@ -296,11 +324,11 @@ class EventLog final {
     mkdir(directory_.c_str(), 0755);
 #if LIMELIGHT_EC_WITH_WPILIB
     dataLog_ = std::make_unique<wpi::log::DataLogBackgroundWriter>(
-        directory_, "ethercat-maindevice-" + TimestampForFile() + ".wpilog",
-        0.25, "Limelight Systemcore EtherCAT MainDevice");
-    eventEntry_ = dataLog_->Start("/EtherCAT/Events", "string");
-    stateEntry_ = dataLog_->Start("/EtherCAT/MainDeviceState", "string");
-    jitterEntry_ = dataLog_->Start("/EtherCAT/CycleJitterUs", "double");
+        directory_, WpiLogFileName(), 0.25,
+        "Limelight Systemcore EtherCAT MainDevice");
+    eventEntry_ = dataLog_->Start("/ec-systemcore/Events", "string");
+    stateEntry_ = dataLog_->Start("/ec-systemcore/MainDeviceState", "string");
+    jitterEntry_ = dataLog_->Start("/ec-systemcore/CycleJitterUs", "double");
 #else
     fallback_.open(directory_ + "/ethercat-maindevice-" + TimestampForFile() +
                        ".log",
@@ -362,16 +390,16 @@ class Telemetry final {
 #if LIMELIGHT_EC_WITH_WPILIB
     instance_ = nt::NetworkTableInstance::GetDefault();
     if (!config_.nt4Server.empty()) {
-      instance_.StartClient4("limelight-ethercat-maindevice");
+      instance_.StartClient4("ec-systemcore-maindevice");
       instance_.SetServer(config_.nt4Server.c_str());
     } else if (config_.nt4Team > 0) {
-      instance_.StartClient4("limelight-ethercat-maindevice");
+      instance_.StartClient4("ec-systemcore-maindevice");
       instance_.SetServerTeam(config_.nt4Team);
     } else {
       instance_.StartServer();
     }
 
-    auto table = instance_.GetTable("EtherCAT");
+    auto table = instance_.GetTable("ec-systemcore");
     statePub_ = table->GetStringTopic("MainDeviceState").Publish();
     activePub_ =
         table->GetStringArrayTopic("ActiveLogicalInterfaces").Publish();
@@ -505,24 +533,32 @@ class Telemetry final {
 #endif
 };
 
-#pragma pack(push, 1)
-struct IpcPacketHeader {
-  uint32_t magic;
-  uint16_t version;
-  uint16_t type;
-  uint32_t sequence;
-  uint16_t logicalNameBytes;
-  uint16_t reserved;
-  uint32_t payloadBytes;
+struct [[gnu::packed]] MainDeviceStatus {
+  uint8_t daemon_status;
+  uint8_t maindevice_state;
+  uint8_t active_adapters;
+  uint8_t subdevice_count;
+  uint16_t active_faults;
+  uint16_t maindevice_jitter_us;
+  uint32_t lost_frames;
+  char interface_name[16];
+  char logical_name[16];
+  uint8_t reserved[84];
 };
-#pragma pack(pop)
 
-struct IpcPacket {
-  uint16_t type = 0;
-  uint32_t sequence = 0;
-  std::string logicalName;
-  std::vector<uint8_t> payload;
+static_assert(sizeof(MainDeviceStatus) == 128,
+              "MainDeviceStatus struct must be exactly 128 bytes");
+
+struct [[gnu::packed]] SubDeviceCommand {
+  uint8_t command_type;
+  uint8_t target_subdevice;
+  uint8_t target_port;
+  uint8_t payload_length;
+  uint8_t payload_data[60];
 };
+
+static_assert(sizeof(SubDeviceCommand) == 64,
+              "SubDeviceCommand must be exactly 64 bytes");
 
 class IpcServer final {
  public:
@@ -551,18 +587,24 @@ class IpcServer final {
     unlink(kSocketPath);
   }
 
-  std::vector<IpcPacket> DrainPackets() {
+  std::vector<SubDeviceCommand> DrainCommands() {
     std::lock_guard<std::mutex> lock(mutex_);
-    std::vector<IpcPacket> packets;
-    while (!packets_.empty()) {
-      packets.emplace_back(std::move(packets_.front()));
-      packets_.pop_front();
+    std::vector<SubDeviceCommand> commands;
+    while (!commands_.empty()) {
+      commands.emplace_back(commands_.front());
+      commands_.pop_front();
     }
-    return packets;
+    return commands;
+  }
+
+  void PublishStatus(const MainDeviceStatus& status) {
+    std::lock_guard<std::mutex> lock(statusMutex_);
+    latestStatus_ = status;
   }
 
  private:
   void Run() {
+    uint64_t nextBroadcastUs = 0;
     while (running_.load() && g_running.load()) {
       pollfd fds[65]{};
       fds[0].fd = listenFd_;
@@ -574,32 +616,34 @@ class IpcServer final {
         ++count;
       }
 
-      const int pollResult = poll(fds, static_cast<nfds_t>(count), 100);
-      if (pollResult <= 0) {
-        continue;
-      }
-
-      if ((fds[0].revents & POLLIN) != 0) {
-        AcceptClients();
-      }
-
-      std::vector<int> closed;
-      for (size_t i = 1; i < count; ++i) {
-        if ((fds[i].revents & (POLLHUP | POLLERR)) != 0) {
-          closed.emplace_back(fds[i].fd);
-          continue;
+      const int pollResult = poll(fds, static_cast<nfds_t>(count), 20);
+      if (pollResult > 0) {
+        if ((fds[0].revents & POLLIN) != 0) {
+          AcceptClients();
         }
-        if ((fds[i].revents & POLLIN) != 0) {
-          if (!ReadPacket(fds[i].fd)) {
+
+        std::vector<int> closed;
+        for (size_t i = 1; i < count; ++i) {
+          if ((fds[i].revents & (POLLHUP | POLLERR)) != 0) {
             closed.emplace_back(fds[i].fd);
+            continue;
+          }
+          if ((fds[i].revents & POLLIN) != 0) {
+            if (!ReadCommand(fds[i].fd)) {
+              closed.emplace_back(fds[i].fd);
+            }
           }
         }
+
+        for (int fd : closed) {
+          CloseClient(fd);
+        }
       }
 
-      for (int fd : closed) {
-        close(fd);
-        clients_.erase(std::remove(clients_.begin(), clients_.end(), fd),
-                       clients_.end());
+      const uint64_t nowUs = MonotonicMicros();
+      if (nowUs >= nextBroadcastUs) {
+        BroadcastStatus();
+        nextBroadcastUs = nowUs + 200000ULL;
       }
     }
   }
@@ -640,52 +684,60 @@ class IpcServer final {
     }
   }
 
-  bool ReadPacket(int fd) {
-    std::array<uint8_t, sizeof(IpcPacketHeader) + kIpcMaxPayloadBytes> buffer{};
-    const ssize_t received = recv(fd, buffer.data(), buffer.size(), 0);
+  bool ReadCommand(int fd) {
+    SubDeviceCommand command{};
+    const ssize_t received = recv(fd, &command, sizeof(command), 0);
     if (received == 0) {
       return false;
     }
     if (received < 0) {
       return errno == EAGAIN || errno == EWOULDBLOCK;
     }
-    if (static_cast<size_t>(received) < sizeof(IpcPacketHeader)) {
+    if (static_cast<size_t>(received) != sizeof(SubDeviceCommand)) {
+      log_.Event("IPC command rejected: expected 64-byte SubDeviceCommand");
       return true;
     }
 
-    IpcPacketHeader header{};
-    memcpy(&header, buffer.data(), sizeof(header));
-    if (header.magic != kIpcMagic || header.version != kIpcVersion ||
-        header.payloadBytes > kIpcMaxPayloadBytes) {
-      log_.Event("IPC packet rejected");
-      return true;
+    if (command.payload_length > sizeof(command.payload_data)) {
+      command.payload_length = sizeof(command.payload_data);
     }
-
-    const size_t required = sizeof(IpcPacketHeader) + header.logicalNameBytes +
-                            header.payloadBytes;
-    if (required > static_cast<size_t>(received) || required > buffer.size()) {
-      log_.Event("IPC packet length mismatch");
-      return true;
-    }
-
-    IpcPacket packet;
-    packet.type = header.type;
-    packet.sequence = header.sequence;
-    const auto* data = buffer.data() + sizeof(IpcPacketHeader);
-    packet.logicalName.assign(reinterpret_cast<const char*>(data),
-                              header.logicalNameBytes);
-    packet.payload.assign(data + header.logicalNameBytes,
-                          data + header.logicalNameBytes +
-                              header.payloadBytes);
 
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      packets_.emplace_back(std::move(packet));
-      while (packets_.size() > 256) {
-        packets_.pop_front();
+      commands_.emplace_back(command);
+      while (commands_.size() > 256) {
+        commands_.pop_front();
       }
     }
     return true;
+  }
+
+  void BroadcastStatus() {
+    MainDeviceStatus status{};
+    {
+      std::lock_guard<std::mutex> lock(statusMutex_);
+      status = latestStatus_;
+    }
+
+    std::vector<int> closed;
+    for (int fd : clients_) {
+      const ssize_t sent = send(fd, &status, sizeof(status), MSG_NOSIGNAL);
+      if (sent < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+        closed.emplace_back(fd);
+      } else if (sent >= 0 && sent != static_cast<ssize_t>(sizeof(status))) {
+        closed.emplace_back(fd);
+      }
+    }
+
+    for (int fd : closed) {
+      CloseClient(fd);
+    }
+  }
+
+  void CloseClient(int fd) {
+    close(fd);
+    clients_.erase(std::remove(clients_.begin(), clients_.end(), fd),
+                   clients_.end());
   }
 
   EventLog& log_;
@@ -694,7 +746,9 @@ class IpcServer final {
   int listenFd_ = -1;
   std::vector<int> clients_;
   std::mutex mutex_;
-  std::deque<IpcPacket> packets_;
+  std::deque<SubDeviceCommand> commands_;
+  std::mutex statusMutex_;
+  MainDeviceStatus latestStatus_{};
 };
 
 class NetlinkMonitor final {
@@ -813,10 +867,23 @@ class EthercatBus final {
   ~EthercatBus() { Shutdown(); }
 
   const std::string& LogicalName() const { return config_.logicalName; }
+  const std::string& PhysicalInterface() const {
+    return config_.physicalInterface;
+  }
   MainDeviceState State() const { return state_; }
   bool Operational() const { return state_ == MainDeviceState::Operational; }
+  uint32_t LostFrames() const { return lostFrames_; }
+  uint16_t ActiveFaults() const {
+    return state_ == MainDeviceState::Error ? 1U : 0U;
+  }
 
-  void Step(bool linkActive, const std::vector<IpcPacket>& packets) {
+  void Step(bool linkActive, const std::vector<SubDeviceCommand>& commands) {
+    for (const auto& command : commands) {
+      if (command.command_type == 0x03) {
+        ResetCounters();
+      }
+    }
+
     if (!linkActive) {
       if (socketOpen_) {
         log_.Event("Transitioning " + config_.logicalName +
@@ -841,9 +908,14 @@ class EthercatBus final {
     }
 
     if (state_ == MainDeviceState::Operational) {
-      ApplyPackets(packets);
+      ApplyCommands(commands);
       ExchangeProcessData();
     }
+  }
+
+  void ResetCounters() {
+    lostFrames_ = 0;
+    workingCounterMisses_ = 0;
   }
 
   std::vector<SubDeviceSnapshot> Snapshot() const {
@@ -928,6 +1000,7 @@ class EthercatBus final {
     const int workingCounter = ecx_receive_processdata(&context_, EC_TIMEOUTRET);
     if (workingCounter < expectedWorkingCounter_) {
       ++workingCounterMisses_;
+      ++lostFrames_;
       if (workingCounterMisses_ > 2) {
         MonitorSubDevices();
       }
@@ -995,19 +1068,26 @@ class EthercatBus final {
     }
   }
 
-  void ApplyPackets(const std::vector<IpcPacket>& packets) {
+  void ApplyCommands(const std::vector<SubDeviceCommand>& commands) {
     ec_groupt* group = &context_.grouplist[groupIndex_];
     if (group->outputs == nullptr || group->Obytes == 0) {
       return;
     }
 
-    for (const auto& packet : packets) {
-      if (packet.logicalName != config_.logicalName || packet.type != 1) {
+    for (const auto& command : commands) {
+      if (command.command_type != 0x01 && command.command_type != 0x02) {
         continue;
       }
+      if (command.target_subdevice != 0 &&
+          command.target_subdevice > context_.slavecount) {
+        continue;
+      }
+
+      const size_t maxOutputBytes = std::min(
+          sizeof(command.payload_data), static_cast<size_t>(group->Obytes));
       const size_t bytes =
-          std::min(packet.payload.size(), static_cast<size_t>(group->Obytes));
-      memcpy(group->outputs, packet.payload.data(), bytes);
+          std::min(static_cast<size_t>(command.payload_length), maxOutputBytes);
+      memcpy(group->outputs, command.payload_data, bytes);
     }
   }
 
@@ -1047,6 +1127,7 @@ class EthercatBus final {
   uint8_t groupIndex_ = 0;
   int expectedWorkingCounter_ = 0;
   int workingCounterMisses_ = 0;
+  uint32_t lostFrames_ = 0;
   bool socketOpen_ = false;
   MainDeviceState state_ = MainDeviceState::Starting;
   uint64_t nextInitializeAttemptUs_ = 0;
@@ -1054,13 +1135,18 @@ class EthercatBus final {
 
 class EthercatMainDeviceDaemon final {
  public:
-  EthercatMainDeviceDaemon(DaemonConfig config, EventLog& log)
+  EthercatMainDeviceDaemon(DaemonConfig config, EventLog& log,
+                           std::string configPath)
       : config_(std::move(config)),
         log_(log),
+        configPath_(std::move(configPath)),
         telemetry_(config_, log_),
         ipc_(log_),
         netlink_(config_.interfaces, log_) {
     preemptRtAvailable_ = DetectPreemptRt();
+    if (stat(configPath_.c_str(), &configStat_) != 0) {
+      memset(&configStat_, 0, sizeof(configStat_));
+    }
     for (const auto& item : config_.interfaces) {
       buses_.emplace_back(std::make_unique<EthercatBus>(item, log_));
     }
@@ -1105,7 +1191,13 @@ class EthercatMainDeviceDaemon final {
           std::max(maxCycleJitterUs_, std::abs(static_cast<double>(jitterNs)) /
                                           1000.0);
 
-      const std::vector<IpcPacket> packets = ipc_.DrainPackets();
+      if (ConfigChanged()) {
+        log_.Event("Configuration file changed; stopping for systemd restart");
+        g_running.store(false);
+        break;
+      }
+
+      const std::vector<SubDeviceCommand> commands = ipc_.DrainCommands();
       RuntimeSnapshot snapshot;
       snapshot.preemptRtAvailable = preemptRtAvailable_;
       snapshot.maxCycleJitterUs = maxCycleJitterUs_;
@@ -1113,16 +1205,29 @@ class EthercatMainDeviceDaemon final {
       MainDeviceState aggregate = MainDeviceState::Operational;
       for (const auto& bus : buses_) {
         const bool linkActive = netlink_.LinkActive(bus->LogicalName());
-        bus->Step(linkActive, packets);
+        bus->Step(linkActive, commands);
         if (bus->Operational()) {
           snapshot.activeLogicalInterfaces.emplace_back(bus->LogicalName());
+          if (snapshot.activeLogicalInterface.empty()) {
+            snapshot.activeLogicalInterface = bus->LogicalName();
+            snapshot.activePhysicalInterface = bus->PhysicalInterface();
+          }
         }
         auto subDevices = bus->Snapshot();
         snapshot.subDevices.insert(snapshot.subDevices.end(),
                                    subDevices.begin(), subDevices.end());
+        snapshot.activeFaults =
+            static_cast<uint16_t>(std::min<int>(
+                UINT16_MAX, snapshot.activeFaults + bus->ActiveFaults()));
+        snapshot.lostFrames =
+            static_cast<uint32_t>(std::min<uint64_t>(
+                UINT32_MAX,
+                static_cast<uint64_t>(snapshot.lostFrames) +
+                    static_cast<uint64_t>(bus->LostFrames())));
         aggregate = Combine(aggregate, bus->State());
       }
       snapshot.aggregateState = aggregate;
+      ipc_.PublishStatus(ToIpcStatus(snapshot));
       telemetry_.PublishSnapshot(std::move(snapshot));
     }
 
@@ -1155,8 +1260,74 @@ class EthercatMainDeviceDaemon final {
     return 0;
   }
 
+  bool ConfigChanged() {
+    struct stat current {};
+    if (stat(configPath_.c_str(), &current) != 0) {
+      return false;
+    }
+
+    const bool changed =
+        current.st_mtim.tv_sec != configStat_.st_mtim.tv_sec ||
+        current.st_mtim.tv_nsec != configStat_.st_mtim.tv_nsec ||
+        current.st_size != configStat_.st_size;
+    if (changed) {
+      configStat_ = current;
+    }
+    return changed;
+  }
+
+  static uint8_t ToIpcState(MainDeviceState state) {
+    switch (state) {
+      case MainDeviceState::Starting:
+      case MainDeviceState::Initializing:
+        return 0;
+      case MainDeviceState::WaitingForLink:
+        return 1;
+      case MainDeviceState::SafeOperational:
+        return 2;
+      case MainDeviceState::Operational:
+        return 3;
+      case MainDeviceState::Error:
+      case MainDeviceState::Stopping:
+        return 4;
+    }
+    return 4;
+  }
+
+  static void CopyFixedString(char* destination, size_t capacity,
+                              const std::string& source) {
+    if (capacity == 0) {
+      return;
+    }
+    const size_t bytes = std::min(capacity - 1, source.size());
+    memcpy(destination, source.data(), bytes);
+    destination[bytes] = '\0';
+  }
+
+  static MainDeviceStatus ToIpcStatus(const RuntimeSnapshot& snapshot) {
+    MainDeviceStatus status{};
+    status.daemon_status =
+        snapshot.aggregateState == MainDeviceState::Operational ? 1U : 0U;
+    status.maindevice_state = ToIpcState(snapshot.aggregateState);
+    status.active_adapters = static_cast<uint8_t>(
+        std::min<size_t>(UINT8_MAX, snapshot.activeLogicalInterfaces.size()));
+    status.subdevice_count = static_cast<uint8_t>(
+        std::min<size_t>(UINT8_MAX, snapshot.subDevices.size()));
+    status.active_faults = snapshot.activeFaults;
+    status.maindevice_jitter_us = static_cast<uint16_t>(std::min<double>(
+        static_cast<double>(UINT16_MAX), snapshot.maxCycleJitterUs));
+    status.lost_frames = snapshot.lostFrames;
+    CopyFixedString(status.interface_name, sizeof(status.interface_name),
+                    snapshot.activePhysicalInterface);
+    CopyFixedString(status.logical_name, sizeof(status.logical_name),
+                    snapshot.activeLogicalInterface);
+    return status;
+  }
+
   DaemonConfig config_;
   EventLog& log_;
+  std::string configPath_;
+  struct stat configStat_ {};
   Telemetry telemetry_;
   IpcServer ipc_;
   NetlinkMonitor netlink_;
@@ -1187,7 +1358,8 @@ int main(int argc, char** argv) {
     log.Event(std::string("PREEMPT_RT ") +
               (limelight_ec::DetectPreemptRt() ? "available" : "unavailable"));
 
-    limelight_ec::EthercatMainDeviceDaemon daemon(std::move(config), log);
+    limelight_ec::EthercatMainDeviceDaemon daemon(std::move(config), log,
+                                                  configPath);
     daemon.Run();
     log.Event("Limelight Systemcore EtherCAT MainDevice daemon stopped");
   } catch (const std::exception& ex) {

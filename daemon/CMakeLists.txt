@@ -29,17 +29,17 @@ if(NOT TARGET soem)
   add_subdirectory("${SOEM_ROOT}" "${CMAKE_CURRENT_BINARY_DIR}/soem")
 endif()
 
-add_executable(limelight-ethercat-maindevice
+add_executable(ec-systemcore-maindevice
   src/main.cpp
 )
 
-target_include_directories(limelight-ethercat-maindevice PRIVATE
+target_include_directories(ec-systemcore-maindevice PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/include"
 )
 
 find_package(Threads REQUIRED)
 
-target_link_libraries(limelight-ethercat-maindevice PRIVATE
+target_link_libraries(ec-systemcore-maindevice PRIVATE
   soem
   Threads::Threads
 )
@@ -49,31 +49,31 @@ if(LIMELIGHT_EC_WITH_WPILIB)
   find_package(wpiutil CONFIG REQUIRED)
 
   if(TARGET ntcore::ntcore)
-    target_link_libraries(limelight-ethercat-maindevice PRIVATE ntcore::ntcore)
+    target_link_libraries(ec-systemcore-maindevice PRIVATE ntcore::ntcore)
   elseif(TARGET ntcore)
-    target_link_libraries(limelight-ethercat-maindevice PRIVATE ntcore)
+    target_link_libraries(ec-systemcore-maindevice PRIVATE ntcore)
   else()
     message(FATAL_ERROR "ntcore was found, but no ntcore CMake target is available")
   endif()
 
   if(TARGET wpiutil::wpiutil)
-    target_link_libraries(limelight-ethercat-maindevice PRIVATE wpiutil::wpiutil)
+    target_link_libraries(ec-systemcore-maindevice PRIVATE wpiutil::wpiutil)
   elseif(TARGET wpiutil)
-    target_link_libraries(limelight-ethercat-maindevice PRIVATE wpiutil)
+    target_link_libraries(ec-systemcore-maindevice PRIVATE wpiutil)
   else()
     message(FATAL_ERROR "wpiutil was found, but no wpiutil CMake target is available")
   endif()
 
-  target_compile_definitions(limelight-ethercat-maindevice PRIVATE
+  target_compile_definitions(ec-systemcore-maindevice PRIVATE
     LIMELIGHT_EC_WITH_WPILIB=1
   )
 else()
-  target_compile_definitions(limelight-ethercat-maindevice PRIVATE
+  target_compile_definitions(ec-systemcore-maindevice PRIVATE
     LIMELIGHT_EC_WITH_WPILIB=0
   )
 endif()
 
-target_compile_options(limelight-ethercat-maindevice PRIVATE
+target_compile_options(ec-systemcore-maindevice PRIVATE
   -Wall
   -Wextra
   -Wpedantic
@@ -81,13 +81,13 @@ target_compile_options(limelight-ethercat-maindevice PRIVATE
   -Wshadow
 )
 
-target_link_options(limelight-ethercat-maindevice PRIVATE
+target_link_options(ec-systemcore-maindevice PRIVATE
   -static-libgcc
   -static-libstdc++
 )
 
 if(LIMELIGHT_EC_FULLY_STATIC)
-  target_link_options(limelight-ethercat-maindevice PRIVATE -static)
+  target_link_options(ec-systemcore-maindevice PRIVATE -static)
 endif()
 
-install(TARGETS limelight-ethercat-maindevice DESTINATION sbin)
+install(TARGETS ec-systemcore-maindevice DESTINATION sbin)
