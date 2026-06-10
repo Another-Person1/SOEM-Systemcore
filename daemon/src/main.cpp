@@ -22,6 +22,7 @@
 #include <sched.h>
 #include <signal.h>
 #include <string.h>
+#include <syslog.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -661,6 +662,8 @@ class IpcServer final {
     strncpy(addr.sun_path, kSocketPath, sizeof(addr.sun_path) - 1);
 
     if (bind(listenFd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+      close(listenFd_);
+      listenFd_ = -1;
       throw std::runtime_error("unable to bind IPC socket");
     }
     chmod(kSocketPath, 0660);
@@ -699,7 +702,21 @@ class IpcServer final {
     }
 
     if (command.payload_length > sizeof(command.payload_data)) {
-      command.payload_length = sizeof(command.payload_data);
+      std::string warning = "IPC command rejected: invalid payload_length " +
+                            std::to_string(command.payload_length) +
+                            " (max " + std::to_string(sizeof(command.payload_data)) + ")";
+      syslog(LOG_WARNING, "%s", warning.c_str());
+      log_.Event(warning);
+      return true;
+    }
+
+    if (command.command_type != 0x01 && command.command_type != 0x02 &&
+        command.command_type != 0x03) {
+      std::string warning = "IPC command rejected: invalid command_type 0x" +
+                            std::to_string(static_cast<int>(command.command_type));
+      syslog(LOG_WARNING, "%s", warning.c_str());
+      log_.Event(warning);
+      return true;
     }
 
     {
@@ -1144,8 +1161,11 @@ class EthercatMainDeviceDaemon final {
         ipc_(log_),
         netlink_(config_.interfaces, log_) {
     preemptRtAvailable_ = DetectPreemptRt();
-    if (stat(configPath_.c_str(), &configStat_) != 0) {
-      memset(&configStat_, 0, sizeof(configStat_));
+    if (stat(configPath_.c_str(), &configStat_) == 0) {
+      isConfigLoaded_ = true;
+    } else {
+      isConfigLoaded_ = false;
+      log_.Event("Warning: config file stat() failed, will retry on next cycle");
     }
     for (const auto& item : config_.interfaces) {
       buses_.emplace_back(std::make_unique<EthercatBus>(item, log_));
@@ -1187,9 +1207,15 @@ class EthercatMainDeviceDaemon final {
               1000000000LL +
           (static_cast<int64_t>(now.tv_nsec) -
            static_cast<int64_t>(next.tv_nsec));
-      maxCycleJitterUs_ =
-          std::max(maxCycleJitterUs_, std::abs(static_cast<double>(jitterNs)) /
-                                          1000.0);
+      const uint16_t currentJitterUs =
+          static_cast<uint16_t>(std::min<double>(
+              static_cast<double>(UINT16_MAX),
+              std::abs(static_cast<double>(jitterNs)) / 1000.0));
+      uint16_t previousJitterUs = maxCycleJitterUs_.load();
+      while (currentJitterUs > previousJitterUs &&
+             !maxCycleJitterUs_.compare_exchange_weak(previousJitterUs,
+                                                       currentJitterUs)) {
+      }
 
       if (ConfigChanged()) {
         log_.Event("Configuration file changed; stopping for systemd restart");
@@ -1200,7 +1226,7 @@ class EthercatMainDeviceDaemon final {
       const std::vector<SubDeviceCommand> commands = ipc_.DrainCommands();
       RuntimeSnapshot snapshot;
       snapshot.preemptRtAvailable = preemptRtAvailable_;
-      snapshot.maxCycleJitterUs = maxCycleJitterUs_;
+      snapshot.maxCycleJitterUs = static_cast<double>(maxCycleJitterUs_.load());
 
       MainDeviceState aggregate = MainDeviceState::Operational;
       for (const auto& bus : buses_) {
@@ -1263,6 +1289,17 @@ class EthercatMainDeviceDaemon final {
   bool ConfigChanged() {
     struct stat current {};
     if (stat(configPath_.c_str(), &current) != 0) {
+      if (isConfigLoaded_) {
+        isConfigLoaded_ = false;
+        log_.Event("Config file stat() failed; marking config as unloaded");
+      }
+      return false;
+    }
+
+    if (!isConfigLoaded_) {
+      isConfigLoaded_ = true;
+      configStat_ = current;
+      log_.Event("Config file is now accessible");
       return false;
     }
 
@@ -1328,13 +1365,14 @@ class EthercatMainDeviceDaemon final {
   EventLog& log_;
   std::string configPath_;
   struct stat configStat_ {};
+  bool isConfigLoaded_ = false;
   Telemetry telemetry_;
   IpcServer ipc_;
   NetlinkMonitor netlink_;
   bool preemptRtAvailable_ = false;
   std::vector<std::unique_ptr<EthercatBus>> buses_;
   std::thread worker_;
-  double maxCycleJitterUs_ = 0.0;
+  std::atomic<uint16_t> maxCycleJitterUs_{0};
 };
 
 void SignalHandler(int) {

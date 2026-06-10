@@ -1,0 +1,12 @@
+{
+  "name": "ec-dashboard",
+  "version": "2026.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun server.ts",
+    "dev": "PORT=8080 bun --watch server.ts",
+    "check:bundle": "bun build server.ts --target=bun --outfile dashboard-check.js"
+  },
+  "devDependencies": {}
+}

@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>EC Dashboard</title>
+    <link rel="stylesheet" href="/tailwind.css" />
+  </head>
+  <body class="min-h-screen bg-slate-950 text-slate-100">
+    <div id="toast" class="fixed top-4 right-4 z-50 hidden rounded bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 shadow-lg"></div>
+
+    <header class="sticky top-0 z-30 border-b border-slate-800 bg-slate-950/95 backdrop-blur">
+      <div class="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3">
+        <div class="flex min-w-0 items-center gap-3">
+          <div class="h-8 w-8 rounded bg-cyan-500/15 ring-1 ring-cyan-400/40"></div>
+          <h1 class="truncate text-lg font-semibold tracking-normal">EC Dashboard</h1>
+        </div>
+        <div class="hidden flex-wrap items-center justify-center gap-3 md:flex" id="statusDots"></div>
+        <button id="jitterIndicator" class="rounded border border-slate-700 px-3 py-1 text-sm font-semibold text-slate-300" type="button">● Jitter: 0µs</button>
+      </div>
+      <nav class="mx-auto flex max-w-7xl gap-1 px-4 pb-3" aria-label="Main views">
+        <button class="tab-button active" data-tab="topology" type="button">Topology</button>
+        <button class="tab-button" data-tab="logs" type="button">Logs</button>
+        <button class="tab-button" data-tab="settings" type="button">Settings</button>
+      </nav>
+    </header>
+
+    <div id="globalFailsafeBanner" class="global-warning hidden">
+      ⚠️ System is running on a regenerated Failsafe Configuration. Please apply factory defaults.
+    </div>
+
+    <main class="mx-auto max-w-7xl px-4 py-4">
+      <section id="topologyView" class="view-block">
+        <div class="section-head">
+          <div>
+            <h2 class="section-title">Topology</h2>
+            <p class="section-note">Detected adapters and active SubDevices in daisy-chain order.</p>
+          </div>
+          <button id="refreshTopology" class="btn-secondary" type="button">Refresh</button>
+        </div>
+        <div id="topologyMap" class="topology-map"></div>
+      </section>
+
+      <section id="logsView" class="view-block hidden">
+        <div class="grid min-h-[68vh] gap-4 lg:grid-cols-[320px_1fr]">
+          <aside class="panel flex min-h-[420px] flex-col">
+            <div class="mb-3 flex items-center justify-between">
+              <h2 class="text-base font-semibold">Log Files</h2>
+              <button id="refreshLogs" class="icon-button" type="button" title="Refresh logs">↻</button>
+            </div>
+            <div id="logFileList" class="min-h-0 flex-1 overflow-y-auto border-y border-slate-800 py-2"></div>
+            <div class="mt-3 grid gap-2">
+              <div class="grid grid-cols-2 gap-2">
+                <button id="deleteSelected" class="btn-danger" type="button">Delete Selected</button>
+                <button id="deleteAll" class="btn-danger" type="button">Delete ALL</button>
+              </div>
+              <button id="downloadSelected" class="btn-primary" type="button">Download Selected</button>
+            </div>
+          </aside>
+          <section class="panel flex min-h-[420px] flex-col">
+            <div class="mb-3 flex items-center justify-between">
+              <h2 class="text-base font-semibold">Live Console</h2>
+              <span id="socketState" class="text-xs text-slate-400">Connecting</span>
+            </div>
+            <div id="consoleOutput" class="terminal flex-1"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="settingsView" class="view-block hidden">
+        <div class="settings-shell">
+          <aside class="settings-sidebar" aria-label="Settings sections">
+            <button class="settings-nav active" data-settings-section="general" type="button">General</button>
+            <button class="settings-nav" data-settings-section="network" type="button">Network</button>
+            <button class="settings-nav" data-settings-section="devices" type="button">Devices</button>
+            <button class="settings-nav" data-settings-section="about" type="button">About</button>
+          </aside>
+
+          <div class="settings-content">
+            <section id="settingsPanelGeneral" class="settings-panel">
+              <div class="section-head">
+                <div>
+                  <h2 class="section-title">General</h2>
+                  <p class="section-note">Log retention, storage thresholds, and interface policy.</p>
+                </div>
+              </div>
+              <div id="failsafeBanner" class="mb-4 hidden rounded border border-amber-400/50 bg-amber-400/10 p-4 text-amber-100">
+                <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <strong>System running on regenerated Failsafe Configuration.</strong>
+                  <button id="applyDefaults" class="btn-warning" type="button">Apply Defaults</button>
+                </div>
+              </div>
+              <div class="form-grid">
+                <label class="field-label">Log Target Directory<input id="logDirectory" class="field-input" value="/var/log/ethercat" /></label>
+                <label class="field-label">Log Limits<select id="logLimit" class="field-input"><option>10</option><option>20</option><option>50</option><option>100</option></select></label>
+                <label class="field-label">Free Space Threshold MB<input id="freeSpaceThreshold" class="field-input" type="number" min="1" value="50" /></label>
+                <label class="toggle-row"><input id="allowRestricted" type="checkbox" /> Allow restricted interfaces</label>
+              </div>
+              <button id="saveConfig" class="btn-primary mt-4" type="button">Save Config</button>
+            </section>
+
+            <section id="settingsPanelNetwork" class="settings-panel hidden">
+              <div class="section-head">
+                <div>
+                  <h2 class="section-title">Network</h2>
+                  <p class="section-note">Logical adapter names, physical locks, and packet throughput.</p>
+                </div>
+              </div>
+              <div id="networkList" class="space-y-2"></div>
+            </section>
+
+            <section id="settingsPanelDevices" class="settings-panel hidden">
+              <div class="section-head">
+                <div>
+                  <h2 class="section-title">Devices</h2>
+                  <p class="section-note">Dense SubDevice diagnostic list.</p>
+                </div>
+              </div>
+              <div id="subDeviceList" class="dense-list"></div>
+            </section>
+
+            <section id="settingsPanelAbout" class="settings-panel hidden">
+              <div class="section-head">
+                <div>
+                  <h2 class="section-title">About</h2>
+                  <p class="section-note">Dashboard version and controller system information.</p>
+                </div>
+              </div>
+              <div class="grid gap-2 text-sm text-slate-300" id="aboutInfo"></div>
+            </section>
+          </div>
+        </div>
+
+        <section class="mt-4 border-t border-slate-800 pt-4">
+          <div class="flex flex-wrap gap-2">
+            <button class="btn-danger" data-restart="daemon" type="button">Restart Daemon</button>
+            <button class="btn-danger" data-restart="dashboard" type="button">Restart Dashboard</button>
+            <button class="btn-danger" data-restart="all" type="button">Restart All</button>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <dialog id="faultModal" class="modal">
+      <div class="modal-panel">
+        <div class="flex items-center justify-between">
+          <h2 class="text-lg font-semibold">Faults</h2>
+          <button class="icon-button" data-close-modal type="button">×</button>
+        </div>
+        <div id="faultList" class="mt-4 dense-list"></div>
+        <button id="clearFaults" class="btn-danger mt-4" type="button">Clear All Faults</button>
+      </div>
+    </dialog>
+
+    <dialog id="adapterModal" class="modal">
+      <div class="modal-panel">
+        <div class="flex items-center justify-between">
+          <h2 class="text-lg font-semibold">Adapter Details</h2>
+          <button class="icon-button" data-close-modal type="button">×</button>
+        </div>
+        <div id="adapterDetails" class="mt-4 grid gap-2 text-sm"></div>
+      </div>
+    </dialog>
+
+    <dialog id="subDeviceModal" class="modal">
+      <div class="modal-panel">
+        <div class="flex items-center justify-between">
+          <h2 class="text-lg font-semibold">SubDevice Details</h2>
+          <button class="icon-button" data-close-modal type="button">×</button>
+        </div>
+        <div id="subDeviceDetails" class="mt-4 grid gap-3 text-sm"></div>
+        <form id="esiUploadForm" class="mt-4 grid gap-2">
+          <label class="field-label">ESI/XML File<input id="esiFile" class="field-input" type="file" accept=".xml,.esi" /></label>
+          <button class="btn-secondary" type="submit">Upload ESI/XML</button>
+        </form>
+        <div class="mt-4 flex gap-2">
+          <input id="stationIdInput" class="field-input" placeholder="Station ID" />
+          <button id="setStationId" class="btn-primary" type="button">Set Station ID</button>
+        </div>
+      </div>
+    </dialog>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>
