@@ -1,4 +1,4 @@
-# SOEM-Systemcore (UNOFFICIAL)
+# EC-Systemcore (UNOFFICIAL)
 > [!NOTE]
 > * This is **unofficial**, very **experimental**, and **not finished**. As of now, the prepackaged .ipk isn't completed yet.
 > * I **don't claim ownership** of any third party trademarks or copyright mentioned here.
@@ -8,9 +8,9 @@
 > [!WARNING]
 > For now, **I don't recommend using this for anything safety-critical** since this project is in an alpha stage.
 
-This repository is an unofficial fork of the **Simple Open EtherCAT Master (SOEM)** library, specifically ported and optimized to run natively on the **Limelight Systemcore** Pi CM5 based architecture for high-performance robotics communication.
+This repository is an **unofficial** attempt to add EtherCAT into Systemcore. In theory high speed EtherCAT communication can be unlocked by attaching a USB-Ethernet adapter (100 MBPS or above, gigabit is ideal) to any one of the Systemcore's 4 USB 3.0 ports, reducing CAN-FD bus usage while unlocking new possibilities for competition robotics.
 
-In theory high speed EtherCAT communication can be unlocked by attaching a USB-Ethernet adapter (100 MBPS or above, gigabit is ideal) to any one of the Systemcore's 4 USB 3.0 ports, reducing CAN-FD bus usage while unlocking new possibilities for competition robotics.
+This is a fork of the **Simple Open EtherCAT Master (SOEM)** library, specifically ported and optimized to run natively on the **Limelight Systemcore** Pi CM5 based architecture for high-performance robotics communication.
 
 ---
 
@@ -18,7 +18,7 @@ In theory high speed EtherCAT communication can be unlocked by attaching a USB-E
 
 Alongside the standard core SOEM library, this repository houses an integrated open-source master-side pipeline located in the root subdirectories:
 
-*   **`/daemon`**: A high-performance, C-based background service that bridges standard Linux network sockets to a local Unix Domain Socket (`/var/run/ledcore.sock`). It features automated self-healing link recovery state machines to natively handle physical USB-to-Ethernet hardware disconnects smoothly under the hood without interrupting the student-facing robot code.
+*   **`/daemon`**: A high-performance, C++ based background service that bridges standard Linux network sockets to a local Unix Domain Socket (`/var/run/ledcore.sock`). It features automated self-healing link recovery state machines to natively handle physical USB-to-Ethernet hardware disconnects smoothly under the hood without interrupting the student-facing robot code.
 *   **`/dashboard`**: A lightweight, low-overhead diagnostic web interface that runs natively on the Systemcore, allowing teams to monitor EtherCAT subdevice connection status, operational states, and packet health in real time via a standard web browser in the pit lane.
 
 The entire suite is compiled together via the top-level CMake configuration and packaged as a standalone binary system installation file (`ec-systemcore.ipk`).
