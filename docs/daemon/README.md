@@ -1,6 +1,6 @@
-# Limelight Systemcore EtherCAT MainDevice Daemon
+# ec-systemcore EtherCAT MainDevice Daemon
 
-This directory contains a C++17 ARM64 Linux daemon for Limelight Systemcore hardware. It runs SOEM as an EtherCAT MainDevice, reports NT4 telemetry under `/EtherCAT/`, and records WPILog events for AdvantageScope.
+This directory contains a C++17 ARM64 Linux daemon for Limelight Systemcore hardware. It runs SOEM as an EtherCAT MainDevice, reports NT4 telemetry under the `ec-systemcore` table, and records WPILog events for AdvantageScope.
 
 ## Build
 
@@ -65,7 +65,7 @@ struct [[gnu::packed]] MainDeviceStatus {
   uint32_t lost_frames;
   char     interface_name[16];
   char     logical_name[16];
-  uint8_t  reserved[86];
+  uint8_t  reserved[84];
 };
 ```
 

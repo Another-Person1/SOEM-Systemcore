@@ -33,6 +33,10 @@ add_executable(ec-systemcore-daemon
   src/main.cpp
 )
 
+set_target_properties(ec-systemcore-daemon PROPERTIES
+  OUTPUT_NAME ec-systemcore-daemon
+)
+
 target_include_directories(ec-systemcore-daemon PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/include"
   "${CMAKE_CURRENT_LIST_DIR}/../third_party/SOEM"
@@ -93,5 +97,5 @@ if(LIMELIGHT_EC_FULLY_STATIC)
   target_link_options(ec-systemcore-daemon PRIVATE -static)
 endif()
 
-install(TARGETS ec-systemcore-daemon RUNTIME DESTINATION /usr/bin)
-install(FILES ec-systemcore.service DESTINATION /etc/systemd/system)
+install(TARGETS ec-systemcore-daemon RUNTIME DESTINATION usr/bin)
+install(FILES ec-systemcore.service DESTINATION etc/systemd/system)

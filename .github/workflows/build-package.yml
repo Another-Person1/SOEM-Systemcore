@@ -19,6 +19,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            binutils-aarch64-linux-gnu \
             cmake \
             ninja-build \
             gcc-aarch64-linux-gnu \
@@ -32,14 +33,21 @@ jobs:
         run: |
           cmake -S . -B build/daemon -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+            -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
+            -DCMAKE_SYSTEM_NAME=Linux \
+            -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
             -DLIMELIGHT_EC_WITH_WPILIB=OFF \
             -DLIMELIGHT_EC_FULLY_STATIC=OFF
 
       - name: Build daemon
-        run: cmake --build build/daemon --target ec-systemcore-daemon
+        run: |
+          cmake --build build/daemon --target ec-systemcore-daemon
+          aarch64-linux-gnu-readelf -h build/daemon/daemon/ec-systemcore-daemon | grep -q 'Machine:[[:space:]]*AArch64'
 
       - name: Build IPK
         run: |
+          test -f scripts/build_ipk.sh
           chmod +x scripts/build_ipk.sh
           ./scripts/build_ipk.sh
 

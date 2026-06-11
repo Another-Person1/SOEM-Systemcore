@@ -12,7 +12,7 @@ def buildPrepare()
       git clean -xdff
       uv venv --seed
       uv pip install wheel
-      uv pip install cmake>=2.28
+      uv pip install 'cmake>=3.28'
    """
 }
 

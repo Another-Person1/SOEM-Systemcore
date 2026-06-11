@@ -1,0 +1,8 @@
+Package: ec-systemcore
+Version: 1.0.0
+Architecture: arm64
+Maintainer: ec-systemcore maintainers
+Depends: systemd, bun
+Section: net
+Priority: optional
+Description: ec-systemcore EtherCAT MainDevice daemon and dashboard for Limelight SystemCore ARM64 systems.

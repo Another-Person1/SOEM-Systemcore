@@ -193,6 +193,39 @@ bool IsRestrictedInterface(const std::string& physicalInterface) {
          physicalInterface == "usb0";
 }
 
+bool IsValidLogicalName(const std::string& logicalName) {
+  if (logicalName.empty() || logicalName.size() > 32) {
+    return false;
+  }
+  return std::all_of(logicalName.begin(), logicalName.end(), [](char ch) {
+    const unsigned char value = static_cast<unsigned char>(ch);
+    return std::isalnum(value) || ch == '_' || ch == '-';
+  });
+}
+
+bool IsValidPhysicalInterfaceName(const std::string& physicalInterface) {
+  if (physicalInterface.empty() || physicalInterface.size() >= IFNAMSIZ) {
+    return false;
+  }
+  return std::all_of(
+      physicalInterface.begin(), physicalInterface.end(), [](char ch) {
+        const unsigned char value = static_cast<unsigned char>(ch);
+        return std::isalnum(value) || ch == '_' || ch == '-' || ch == '.' ||
+               ch == ':';
+      });
+}
+
+bool IsSafeAbsoluteDirectory(const std::string& path) {
+  if (path.empty() || path.front() != '/' || path == "/" ||
+      path.find("..") != std::string::npos || path.find("//") != std::string::npos) {
+    return false;
+  }
+  return std::all_of(path.begin(), path.end(), [](char ch) {
+    const unsigned char value = static_cast<unsigned char>(ch);
+    return std::isalnum(value) || ch == '/' || ch == '_' || ch == '-';
+  });
+}
+
 bool IsLinkActive(const std::string& physicalInterface) {
   struct ifaddrs* addresses = nullptr;
   if (getifaddrs(&addresses) != 0) {
@@ -263,6 +296,9 @@ DaemonConfig LoadConfig(const std::string& path) {
   config.nt4Server = root.stringValue("nt4_server", "");
   config.nt4Team = static_cast<int>(root.integerValue("nt4_team", 0));
   config.logDirectory = root.stringValue("log_directory", kLogDirectory);
+  if (!IsSafeAbsoluteDirectory(config.logDirectory)) {
+    throw std::runtime_error("log_directory must be a safe absolute path");
+  }
   config.logCountLimit =
       std::max<int64_t>(1, root.integerValue("log_count_limit", 10));
   config.freeSpaceThresholdMb =
@@ -293,6 +329,14 @@ DaemonConfig LoadConfig(const std::string& path) {
         interfaceConfig.physicalInterface.empty()) {
       throw std::runtime_error(
           "interface entries require logical_name and physical_interface");
+    }
+    if (!IsValidLogicalName(interfaceConfig.logicalName)) {
+      throw std::runtime_error("invalid logical interface name " +
+                               interfaceConfig.logicalName);
+    }
+    if (!IsValidPhysicalInterfaceName(interfaceConfig.physicalInterface)) {
+      throw std::runtime_error("invalid physical interface name " +
+                               interfaceConfig.physicalInterface);
     }
     if (!config.allowRestrictedInterfaces &&
         IsRestrictedInterface(interfaceConfig.physicalInterface)) {
@@ -328,12 +372,12 @@ class EventLog final {
 #if LIMELIGHT_EC_WITH_WPILIB
     dataLog_ = std::make_unique<wpi::log::DataLogBackgroundWriter>(
         directory_, WpiLogFileName(), 0.25,
-        "Limelight Systemcore EtherCAT MainDevice");
+        "ec-systemcore EtherCAT MainDevice");
     eventEntry_ = dataLog_->Start("/ec-systemcore/Events", "string");
     stateEntry_ = dataLog_->Start("/ec-systemcore/MainDeviceState", "string");
     jitterEntry_ = dataLog_->Start("/ec-systemcore/CycleJitterUs", "double");
 #else
-    fallback_.open(directory_ + "/ethercat-maindevice-" + TimestampForFile() +
+    fallback_.open(directory_ + "/ec-systemcore-" + TimestampForFile() +
                        ".log",
                    std::ios::app);
 #endif
@@ -1404,16 +1448,16 @@ int main(int argc, char** argv) {
   try {
     limelight_ec::DaemonConfig config = limelight_ec::LoadConfig(configPath);
     limelight_ec::EventLog log(config.logDirectory);
-    log.Event("Limelight Systemcore EtherCAT MainDevice daemon starting");
+    log.Event("ec-systemcore EtherCAT MainDevice daemon starting");
     log.Event(std::string("PREEMPT_RT ") +
               (limelight_ec::DetectPreemptRt() ? "available" : "unavailable"));
 
     limelight_ec::EthercatMainDeviceDaemon daemon(std::move(config), log,
                                                   configPath);
     daemon.Run();
-    log.Event("Limelight Systemcore EtherCAT MainDevice daemon stopped");
+    log.Event("ec-systemcore EtherCAT MainDevice daemon stopped");
   } catch (const std::exception& ex) {
-    std::cerr << "fatal: " << ex.what() << '\n';
+    std::cerr << "ec-systemcore fatal: " << ex.what() << '\n';
     return 1;
   }
   return 0;

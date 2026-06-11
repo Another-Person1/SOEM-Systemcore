@@ -12,6 +12,13 @@ const state = {
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
+const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  "\"": "&quot;",
+  "'": "&#39;"
+}[ch]));
 
 const levelClass = (level) => ({
   good: "status-good",
@@ -98,7 +105,7 @@ function renderHeader(data) {
     ["Faults", faultLevel, `${s.activeFaults} active faults`, "faults"]
   ];
   $("#statusDots").innerHTML = dots.map(([label, level, title, action]) =>
-    `<button class="status-pill ${levelClass(level)}" title="${title}" data-action="${action || ""}" type="button">● ${label}</button>`
+    `<button class="status-pill ${levelClass(level)}" title="${escapeHtml(title)}" data-action="${escapeHtml(action || "")}" type="button">● ${escapeHtml(label)}</button>`
   ).join("");
 
   renderHeaderTelemetry();
@@ -118,8 +125,8 @@ function renderTopology() {
   const adapterHtml = state.adapters.map((adapter, index) => `
     <button class="topology-node adapter-node" data-adapter="${index}" type="button">
       <span class="node-kicker">Adapter</span>
-      <strong>${adapter.logicalName}</strong>
-      <small>${adapter.name} · ${adapter.mac}</small>
+      <strong>${escapeHtml(adapter.logicalName)}</strong>
+      <small>${escapeHtml(adapter.name)} · ${escapeHtml(adapter.mac)}</small>
     </button>
   `).join("");
   const devices = Array.from({ length: subDeviceCount }, (_, index) => `
@@ -142,8 +149,8 @@ function renderLogs() {
   const list = $("#logFileList");
   list.innerHTML = state.logs.map((log) => `
     <label class="log-row">
-      <input type="checkbox" value="${log.name}" />
-      <span class="min-w-0 flex-1 truncate">${log.name}</span>
+      <input type="checkbox" value="${escapeHtml(log.name)}" />
+      <span class="min-w-0 flex-1 truncate">${escapeHtml(log.name)}</span>
       <span class="text-xs text-slate-500">${formatBytes(log.size)}</span>
     </label>
   `).join("") || `<div class="empty-state">No .wpilog files found.</div>`;
@@ -174,16 +181,16 @@ function renderSettings(data) {
 
   if (!document.activeElement?.closest("#networkList")) {
     $("#networkList").innerHTML = data.adapters.map((adapter) => `
-      <div class="network-row" data-interface="${adapter.name}">
+      <div class="network-row" data-interface="${escapeHtml(adapter.name)}">
         <div class="min-w-0 grid gap-2">
           <label class="field-label">Logical name
-            <input class="field-input network-logical-name" value="${adapter.logicalName}" ${data.configState.regeneratedFailsafe ? "disabled" : ""} />
+            <input class="field-input network-logical-name" value="${escapeHtml(adapter.logicalName)}" ${data.configState.regeneratedFailsafe ? "disabled" : ""} />
           </label>
           <label class="toggle-row">
             <input class="network-lock" type="checkbox" ${adapter.locked ? "checked" : ""} ${data.configState.regeneratedFailsafe ? "disabled" : ""} />
-            Lock to physical port ${adapter.name}
+            Lock to physical port ${escapeHtml(adapter.name)}
           </label>
-          <div class="text-xs text-slate-500">${adapter.mac}</div>
+          <div class="text-xs text-slate-500">${escapeHtml(adapter.mac)}</div>
         </div>
         <div class="text-right text-xs text-slate-400">
           <div>RX ${formatBytes(adapter.rxBytesPerSecond)}/s</div>
@@ -202,8 +209,8 @@ function renderSettings(data) {
   `).join("") || `<div class="empty-state">No SubDevices reporting.</div>`;
 
   $("#aboutInfo").innerHTML = `
-    <div>EC Dashboard | Version ${data.dashboardVersion} | Copyright (c) EC Dashboard maintainers and contributors.</div>
-    <div>CPU: ${data.system.model}</div>
+    <div>EC Dashboard | Version ${escapeHtml(data.dashboardVersion)} | Copyright (c) EC Dashboard maintainers and contributors.</div>
+    <div>CPU: ${escapeHtml(data.system.model)}</div>
     <div>RAM: ${data.system.memAvailableMb} MB available / ${data.system.memTotalMb} MB total</div>
     <div>Network usage: ${formatBytes(data.system.networkBytes)}</div>
     <div>PREEMPT_RT: ${data.system.preemptRtActive ? "Active" : "Not detected"}</div>
@@ -257,9 +264,9 @@ function showAdapterModal(index) {
   const adapter = state.adapters[index];
   if (!adapter) return;
   $("#adapterDetails").innerHTML = `
-    <div class="dense-row"><span>Logical name</span><strong>${adapter.logicalName}</strong></div>
-    <div class="dense-row"><span>Interface</span><strong>${adapter.name}</strong></div>
-    <div class="dense-row"><span>MAC</span><strong>${adapter.mac}</strong></div>
+    <div class="dense-row"><span>Logical name</span><strong>${escapeHtml(adapter.logicalName)}</strong></div>
+    <div class="dense-row"><span>Interface</span><strong>${escapeHtml(adapter.name)}</strong></div>
+    <div class="dense-row"><span>MAC</span><strong>${escapeHtml(adapter.mac)}</strong></div>
     <div class="dense-row"><span>Restricted</span><strong>${adapter.restricted ? "Yes" : "No"}</strong></div>
     <div class="dense-row"><span>Locked</span><strong>${adapter.locked ? "Yes" : "No"}</strong></div>
   `;

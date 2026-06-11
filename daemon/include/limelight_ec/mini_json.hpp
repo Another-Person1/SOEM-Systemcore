@@ -144,7 +144,10 @@ class Json final {
         std::string key = parseString();
         skipWhitespace();
         expect(':');
-        objectValue.emplace(std::move(key), parseValue());
+        auto inserted = objectValue.emplace(std::move(key), parseValue());
+        if (!inserted.second) {
+          throw std::runtime_error("duplicate JSON object key");
+        }
         skipWhitespace();
         char separator = get();
         if (separator == '}') {
@@ -187,6 +190,9 @@ class Json final {
         char ch = get();
         if (ch == '"') {
           return value;
+        }
+        if (static_cast<unsigned char>(ch) < 0x20U) {
+          throw std::runtime_error("invalid control character in JSON string");
         }
         if (ch != '\\') {
           value.push_back(ch);
@@ -248,11 +254,25 @@ class Json final {
       if (peek() == '-') {
         get();
       }
-      while (!finished() && std::isdigit(static_cast<unsigned char>(peek()))) {
+      if (finished() || !std::isdigit(static_cast<unsigned char>(peek()))) {
+        throw std::runtime_error("invalid JSON number");
+      }
+      if (peek() == '0') {
         get();
+        if (!finished() && std::isdigit(static_cast<unsigned char>(peek()))) {
+          throw std::runtime_error("invalid leading zero in JSON number");
+        }
+      } else {
+        while (!finished() &&
+               std::isdigit(static_cast<unsigned char>(peek()))) {
+          get();
+        }
       }
       if (!finished() && peek() == '.') {
         get();
+        if (finished() || !std::isdigit(static_cast<unsigned char>(peek()))) {
+          throw std::runtime_error("invalid JSON fraction");
+        }
         while (!finished() &&
                std::isdigit(static_cast<unsigned char>(peek()))) {
           get();
@@ -262,6 +282,9 @@ class Json final {
         get();
         if (!finished() && (peek() == '+' || peek() == '-')) {
           get();
+        }
+        if (finished() || !std::isdigit(static_cast<unsigned char>(peek()))) {
+          throw std::runtime_error("invalid JSON exponent");
         }
         while (!finished() &&
                std::isdigit(static_cast<unsigned char>(peek()))) {

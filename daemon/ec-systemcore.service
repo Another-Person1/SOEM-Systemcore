@@ -6,9 +6,16 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=/usr/bin/ec-systemcore-daemon
-Restart=on-failure
+Restart=always
 RestartSec=2
 User=root
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_NICE CAP_IPC_LOCK
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_NICE CAP_IPC_LOCK
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/var/log/ethercat /run /var/run
 
 [Install]
 WantedBy=multi-user.target

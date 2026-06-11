@@ -4,19 +4,30 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PKG_NAME="ec-systemcore"
 PKG_VERSION="${PKG_VERSION:-1.0.0}"
-PKG_ARCH="arm64"
+readonly PKG_ARCH="arm64"
 STAGE_DIR="${STAGE_DIR:-${ROOT_DIR}/ipk_stage}"
 DIST_DIR="${DIST_DIR:-${ROOT_DIR}/dist}"
-DAEMON_BIN="${DAEMON_BIN:-${ROOT_DIR}/build/daemon/ec-systemcore-daemon}"
 DASHBOARD_DIR="${ROOT_DIR}/dashboard"
 DASHBOARD_OUT="${DASHBOARD_DIR}/dist"
+CONTROL_DIR="${ROOT_DIR}/CONTROL"
 
 if ! command -v opkg-build >/dev/null 2>&1; then
   echo "error: opkg-build is required. Install opkg-utils." >&2
   exit 1
 fi
 
-if [[ ! -f "${DAEMON_BIN}" ]]; then
+if [[ -z "${DAEMON_BIN:-}" ]]; then
+  for candidate in \
+    "${ROOT_DIR}/build/daemon/ec-systemcore-daemon" \
+    "${ROOT_DIR}/build/daemon/daemon/ec-systemcore-daemon"; do
+    if [[ -f "${candidate}" ]]; then
+      DAEMON_BIN="${candidate}"
+      break
+    fi
+  done
+fi
+
+if [[ -z "${DAEMON_BIN:-}" || ! -f "${DAEMON_BIN}" ]]; then
   found_bin="$(find "${ROOT_DIR}/build" -type f -name ec-systemcore-daemon -print -quit 2>/dev/null || true)"
   if [[ -n "${found_bin}" ]]; then
     DAEMON_BIN="${found_bin}"
@@ -24,6 +35,22 @@ if [[ ! -f "${DAEMON_BIN}" ]]; then
     echo "error: ec-systemcore-daemon binary not found. Set DAEMON_BIN or build the daemon first." >&2
     exit 1
   fi
+fi
+
+if command -v aarch64-linux-gnu-readelf >/dev/null 2>&1; then
+  binary_machine="$(aarch64-linux-gnu-readelf -h "${DAEMON_BIN}" | awk -F: '/Machine:/ { gsub(/^[ \t]+/, "", $2); print $2 }')"
+  if [[ "${binary_machine}" != "AArch64" ]]; then
+    echo "error: ${DAEMON_BIN} is '${binary_machine}', expected AArch64 for arm64 IPK." >&2
+    exit 1
+  fi
+elif command -v file >/dev/null 2>&1; then
+  binary_file_type="$(file -b "${DAEMON_BIN}")"
+  if [[ "${binary_file_type}" != *"aarch64"* && "${binary_file_type}" != *"ARM aarch64"* && "${binary_file_type}" != *"ARM64"* ]]; then
+    echo "error: ${DAEMON_BIN} is '${binary_file_type}', expected AArch64 for arm64 IPK." >&2
+    exit 1
+  fi
+else
+  echo "warning: unable to verify daemon binary architecture; readelf or file not found." >&2
 fi
 
 rm -rf "${STAGE_DIR}"
@@ -35,6 +62,7 @@ mkdir -p \
   "${DIST_DIR}"
 
 install -m 0755 "${DAEMON_BIN}" "${STAGE_DIR}/usr/bin/ec-systemcore-daemon"
+chmod 0755 "${STAGE_DIR}/usr/bin/ec-systemcore-daemon"
 install -m 0644 "${ROOT_DIR}/daemon/ec-systemcore.service" \
   "${STAGE_DIR}/etc/systemd/system/ec-systemcore.service"
 
@@ -59,36 +87,25 @@ else
   cp -R "${DASHBOARD_DIR}/public" "${STAGE_DIR}/var/www/html/apps/ec-dashboard/public"
 fi
 
-cat >"${STAGE_DIR}/CONTROL/control" <<CONTROL
-Package: ${PKG_NAME}
-Version: ${PKG_VERSION}
-Architecture: ${PKG_ARCH}
-Maintainer: ec-systemcore maintainers
-Depends: libsoem
-Section: net
-Priority: optional
-Description: ec-systemcore EtherCAT MainDevice daemon and dashboard for Raspberry Pi CM5.
-CONTROL
+install -m 0644 "${CONTROL_DIR}/control" "${STAGE_DIR}/CONTROL/control"
+sed -i \
+  -e "s/^Package:.*/Package: ${PKG_NAME}/" \
+  -e "s/^Version:.*/Version: ${PKG_VERSION}/" \
+  -e "s/^Architecture:.*/Architecture: ${PKG_ARCH}/" \
+  "${STAGE_DIR}/CONTROL/control"
 
-cat >"${STAGE_DIR}/CONTROL/postinst" <<'POSTINST'
-#!/bin/sh
-set -e
-if command -v systemctl >/dev/null 2>&1; then
-  systemctl daemon-reload
-  systemctl enable --now ec-systemcore
+if ! grep -qx "Architecture: ${PKG_ARCH}" "${STAGE_DIR}/CONTROL/control"; then
+  echo "error: CONTROL/control must declare Architecture: ${PKG_ARCH}" >&2
+  exit 1
 fi
-exit 0
-POSTINST
+if ! grep -Eq '^Depends: .*systemd' "${STAGE_DIR}/CONTROL/control" ||
+   ! grep -Eq '^Depends: .*bun' "${STAGE_DIR}/CONTROL/control"; then
+  echo "error: CONTROL/control must depend on systemd and bun for the SystemCore runtime environment." >&2
+  exit 1
+fi
 
-cat >"${STAGE_DIR}/CONTROL/prerm" <<'PRERM'
-#!/bin/sh
-set -e
-if command -v systemctl >/dev/null 2>&1; then
-  systemctl stop ec-systemcore || true
-  systemctl disable ec-systemcore || true
-fi
-exit 0
-PRERM
+install -m 0755 "${CONTROL_DIR}/postinst" "${STAGE_DIR}/CONTROL/postinst"
+install -m 0755 "${CONTROL_DIR}/prerm" "${STAGE_DIR}/CONTROL/prerm"
 
 chmod 0755 "${STAGE_DIR}/CONTROL/postinst" "${STAGE_DIR}/CONTROL/prerm"
 opkg-build "${STAGE_DIR}" "${DIST_DIR}"

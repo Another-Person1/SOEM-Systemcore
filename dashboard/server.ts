@@ -1,14 +1,19 @@
-import { mkdir, readdir, readFile, stat, statfs, unlink, writeFile } from "node:fs/promises";
-import { basename, extname, join, resolve } from "node:path";
+import { mkdir, readdir, stat, statfs, unlink } from "node:fs/promises";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 
 const DASHBOARD_VERSION = "2026.0.1";
 const DAEMON_VERSION = "2026.1.0";
 const DEFAULT_PORT = 80;
-const PORT = Number(Bun.env.PORT ?? DEFAULT_PORT);
+const requestedPort = Number(Bun.env.PORT ?? DEFAULT_PORT);
+const PORT = Number.isInteger(requestedPort) && requestedPort > 0 && requestedPort <= 65535
+  ? requestedPort
+  : DEFAULT_PORT;
 const PUBLIC_DIR = join(import.meta.dir, "public");
 const CONFIG_PATH = Bun.env.EC_DASHBOARD_CONFIG ?? "/etc/ethercat/ec-configuration.json";
 const SOCKET_PATH = Bun.env.EC_DASHBOARD_SOCKET ?? "/var/run/ec-systemcore.sock";
 const RESTRICTED_INTERFACES = new Set(["eth0", "wlan0", "usb0", "lo"]);
+const MAX_INTERFACE_MAPPINGS = 32;
+const MAX_ESI_BYTES = 2 * 1024 * 1024;
 
 type InterfaceMapping = {
   logical_name: string;
@@ -115,34 +120,60 @@ function text(value: string, status = 200) {
 }
 
 function sanitizeDirectoryPath(path: string): string {
-  // Only allow absolute paths, alphanumeric characters, slashes, hyphens, and underscores.
-  // Must start with '/' and not contain '..' or duplicate slashes.
   const trimmed = path.trim();
   if (!trimmed.startsWith("/") || trimmed.includes("..") || /[^A-Za-z0-9\/_-]/.test(trimmed)) {
     return defaultConfig.log_directory;
   }
-  // Remove consecutive slashes
   const sanitized = trimmed.replace(/\/+/g, "/");
   return sanitized === "/" ? defaultConfig.log_directory : sanitized;
+}
+
+function sanitizeName(value: string, fallback: string): string {
+  const trimmed = value.trim().slice(0, 32);
+  return /^[A-Za-z0-9_-]+$/.test(trimmed) ? trimmed : fallback;
+}
+
+function sanitizeInterfaceName(value: string, fallback: string): string {
+  const trimmed = value.trim().slice(0, 15);
+  return /^[A-Za-z0-9_.:-]+$/.test(trimmed) ? trimmed : fallback;
 }
 
 function normalizeConfig(value: Partial<DashboardConfig>): DashboardConfig {
   const maxLogs = Number(value.log_count_limit);
   const freeMb = Number(value.free_space_threshold_mb);
   const mappings = Array.isArray(value.interface_mappings) ? value.interface_mappings : [];
+  const allowRestricted = Boolean(value.allow_restricted_interfaces);
+  const interfaceMappings: InterfaceMapping[] = [];
+  const logicalNames = new Set<string>();
+  const physicalInterfaces = new Set<string>();
+  for (const item of mappings.slice(0, MAX_INTERFACE_MAPPINGS)) {
+    if (!item || typeof item.logical_name !== "string" || typeof item.physical_interface !== "string") {
+      continue;
+    }
+    const logicalName = sanitizeName(item.logical_name, "EC_Trunk");
+    const physicalInterface = sanitizeInterfaceName(item.physical_interface, "eth1");
+    if (!allowRestricted && RESTRICTED_INTERFACES.has(physicalInterface)) {
+      continue;
+    }
+    if (logicalNames.has(logicalName) || physicalInterfaces.has(physicalInterface)) {
+      continue;
+    }
+    logicalNames.add(logicalName);
+    physicalInterfaces.add(physicalInterface);
+    interfaceMappings.push({
+      logical_name: logicalName,
+      physical_interface: physicalInterface
+    });
+  }
+
   return {
-    allow_restricted_interfaces: Boolean(value.allow_restricted_interfaces),
+    allow_restricted_interfaces: allowRestricted,
     log_directory: typeof value.log_directory === "string"
       ? sanitizeDirectoryPath(value.log_directory)
       : defaultConfig.log_directory,
     log_count_limit: [10, 20, 50, 100].includes(maxLogs) ? maxLogs : defaultConfig.log_count_limit,
     free_space_threshold_mb: Number.isFinite(freeMb) && freeMb >= 1 ? Math.floor(freeMb) : defaultConfig.free_space_threshold_mb,
-    interface_mappings: mappings
-      .filter((item) => item && typeof item.logical_name === "string" && typeof item.physical_interface === "string")
-      .map((item) => ({
-        logical_name: item.logical_name.trim() || "EC_Trunk",
-        physical_interface: item.physical_interface.trim() || "eth1"
-      }))
+    interface_mappings: interfaceMappings.length ? interfaceMappings : defaultConfig.interface_mappings
   };
 }
 
@@ -168,7 +199,7 @@ async function loadConfig(): Promise<void> {
 
 async function persistConfig(config: DashboardConfig, keepFailsafe: boolean): Promise<void> {
   try {
-    await mkdir(resolve(CONFIG_PATH, ".."), { recursive: true });
+    await mkdir(dirname(CONFIG_PATH), { recursive: true });
     await Bun.write(CONFIG_PATH, JSON.stringify(config, null, 2) + "\n");
     configState = {
       config,
@@ -256,9 +287,8 @@ async function rotateLogs(): Promise<void> {
   try {
     await mkdir(configState.config.log_directory, { recursive: true });
     const logs = await listLogs();
-    const fsInfo = await statfs(configState.config.log_directory);
-    const freeMb = Math.floor(Number(fsInfo.bavail * fsInfo.bsize) / 1024 / 1024);
     const sortedOldest = [...logs].sort((a, b) => a.modifiedAt - b.modifiedAt);
+    let freeMb = await freeSpaceMb(configState.config.log_directory);
 
     while (
       sortedOldest.length > configState.config.log_count_limit ||
@@ -267,16 +297,26 @@ async function rotateLogs(): Promise<void> {
       const next = sortedOldest.shift();
       if (!next) break;
       await unlink(join(configState.config.log_directory, next.name));
+      freeMb = await freeSpaceMb(configState.config.log_directory);
     }
   } catch (error) {
     console.error("Log rotation warning:", error);
   }
 }
 
+async function freeSpaceMb(path: string): Promise<number> {
+  const fsInfo = await statfs(path);
+  return Math.floor(Number(fsInfo.bavail * fsInfo.bsize) / 1024 / 1024);
+}
+
 function safeLogPath(name: string): string | null {
   const clean = basename(name);
   if (clean !== name || extname(clean) !== ".wpilog") return null;
-  return join(configState.config.log_directory, clean);
+  const logDirectory = resolve(configState.config.log_directory);
+  const resolved = resolve(logDirectory, clean);
+  const rel = relative(logDirectory, resolved);
+  if (rel.startsWith("..") || isAbsolute(rel)) return null;
+  return resolved;
 }
 
 async function deleteLogs(names: string[]): Promise<number> {
@@ -441,15 +481,18 @@ async function systemInfo() {
 
 async function runSystemRestart(target: string) {
   const serviceMap: Record<string, string[]> = {
-    daemon: ["ec-systemcore"],
-    dashboard: ["ec_dashboard"],
-    all: ["ec-systemcore", "ec_dashboard"]
+    daemon: ["ec-systemcore.service"],
+    dashboard: ["ec_dashboard.service"],
+    all: ["ec-systemcore.service", "ec_dashboard.service"]
   };
   const services = serviceMap[target];
   if (!services) return { ok: false, message: "Unknown restart target" };
 
   for (const service of services) {
-    const proc = Bun.spawn(["sudo", "systemctl", "restart", service], {
+    const command = typeof process.getuid === "function" && process.getuid() === 0
+      ? ["systemctl", "restart", service]
+      : ["sudo", "systemctl", "restart", service];
+    const proc = Bun.spawn(command, {
       stdout: "pipe",
       stderr: "pipe"
     });
@@ -539,8 +582,10 @@ function concat(parts: Uint8Array[]): Uint8Array {
 
 async function serveStatic(pathname: string): Promise<Response> {
   const fileName = pathname === "/" ? "index.html" : pathname.slice(1);
-  const resolved = resolve(PUBLIC_DIR, fileName);
-  if (!resolved.startsWith(resolve(PUBLIC_DIR))) return text("Forbidden", 403);
+  const publicRoot = resolve(PUBLIC_DIR);
+  const resolved = resolve(publicRoot, fileName);
+  const rel = relative(publicRoot, resolved);
+  if (rel.startsWith("..") || isAbsolute(rel)) return text("Forbidden", 403);
   const file = Bun.file(resolved);
   if (!(await file.exists())) return text("Not found", 404);
   return new Response(file, {
@@ -634,6 +679,9 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     const form = await req.formData();
     const file = form.get("file");
     if (!(file instanceof File)) return json({ ok: false, message: "Missing ESI/XML file" }, { status: 400 });
+    if (file.size > MAX_ESI_BYTES) {
+      return json({ ok: false, message: "ESI/XML file exceeds the 2 MB upload limit." }, { status: 400 });
+    }
     const ext = extname(file.name).toLowerCase();
     if (ext !== ".xml" && ext !== ".esi") {
       return json({ ok: false, message: "Invalid file extension. Only .xml and .esi are allowed." }, { status: 400 });
