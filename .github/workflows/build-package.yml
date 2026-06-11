@@ -23,8 +23,12 @@ jobs:
             cmake \
             ninja-build \
             gcc-aarch64-linux-gnu \
-            g++-aarch64-linux-gnu \
-            opkg-utils
+            g++-aarch64-linux-gnu
+
+      - name: Set up opkg-utils
+        run: |
+          git clone git://git.yoctoproject.org/opkg-utils
+          echo "$(pwd)/opkg-utils" >> $GITHUB_PATH
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
