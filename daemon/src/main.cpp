@@ -322,7 +322,9 @@ DaemonConfig LoadConfig(const std::string& path) {
 class EventLog final {
  public:
   explicit EventLog(std::string directory) : directory_(std::move(directory)) {
-    mkdir(directory_.c_str(), 0755);
+    if (mkdir(directory_.c_str(), 0755) != 0 && errno != EEXIST) {
+      throw std::runtime_error("unable to create log directory: " + directory_);
+    }
 #if LIMELIGHT_EC_WITH_WPILIB
     dataLog_ = std::make_unique<wpi::log::DataLogBackgroundWriter>(
         directory_, WpiLogFileName(), 0.25,
@@ -666,8 +668,14 @@ class IpcServer final {
       listenFd_ = -1;
       throw std::runtime_error("unable to bind IPC socket");
     }
-    chmod(kSocketPath, 0660);
+    if (chmod(kSocketPath, 0660) < 0) {
+      close(listenFd_);
+      listenFd_ = -1;
+      throw std::runtime_error("unable to set permissions on IPC socket");
+    }
     if (listen(listenFd_, 16) < 0) {
+      close(listenFd_);
+      listenFd_ = -1;
       throw std::runtime_error("unable to listen on IPC socket");
     }
     log_.Event(std::string("IPC socket active at ") + kSocketPath);
@@ -826,6 +834,8 @@ class NetlinkMonitor final {
     addr.nl_family = AF_NETLINK;
     addr.nl_groups = RTMGRP_LINK;
     if (bind(fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+      close(fd_);
+      fd_ = -1;
       throw std::runtime_error("unable to bind rtnetlink socket");
     }
   }
@@ -1211,10 +1221,12 @@ class EthercatMainDeviceDaemon final {
           static_cast<uint16_t>(std::min<double>(
               static_cast<double>(UINT16_MAX),
               std::abs(static_cast<double>(jitterNs)) / 1000.0));
-      uint16_t previousJitterUs = maxCycleJitterUs_.load();
+      uint16_t previousJitterUs = maxCycleJitterUs_.load(std::memory_order_relaxed);
       while (currentJitterUs > previousJitterUs &&
              !maxCycleJitterUs_.compare_exchange_weak(previousJitterUs,
-                                                       currentJitterUs)) {
+                                                       currentJitterUs,
+                                                       std::memory_order_relaxed,
+                                                       std::memory_order_relaxed)) {
       }
 
       if (ConfigChanged()) {
@@ -1226,7 +1238,7 @@ class EthercatMainDeviceDaemon final {
       const std::vector<SubDeviceCommand> commands = ipc_.DrainCommands();
       RuntimeSnapshot snapshot;
       snapshot.preemptRtAvailable = preemptRtAvailable_;
-      snapshot.maxCycleJitterUs = static_cast<double>(maxCycleJitterUs_.load());
+      snapshot.maxCycleJitterUs = static_cast<double>(maxCycleJitterUs_.load(std::memory_order_relaxed));
 
       MainDeviceState aggregate = MainDeviceState::Operational;
       for (const auto& bus : buses_) {

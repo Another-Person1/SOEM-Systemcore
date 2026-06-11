@@ -114,14 +114,26 @@ function text(value: string, status = 200) {
   });
 }
 
+function sanitizeDirectoryPath(path: string): string {
+  // Only allow absolute paths, alphanumeric characters, slashes, hyphens, and underscores.
+  // Must start with '/' and not contain '..' or duplicate slashes.
+  const trimmed = path.trim();
+  if (!trimmed.startsWith("/") || trimmed.includes("..") || /[^A-Za-z0-9\/_-]/.test(trimmed)) {
+    return defaultConfig.log_directory;
+  }
+  // Remove consecutive slashes
+  const sanitized = trimmed.replace(/\/+/g, "/");
+  return sanitized === "/" ? defaultConfig.log_directory : sanitized;
+}
+
 function normalizeConfig(value: Partial<DashboardConfig>): DashboardConfig {
   const maxLogs = Number(value.log_count_limit);
   const freeMb = Number(value.free_space_threshold_mb);
   const mappings = Array.isArray(value.interface_mappings) ? value.interface_mappings : [];
   return {
     allow_restricted_interfaces: Boolean(value.allow_restricted_interfaces),
-    log_directory: typeof value.log_directory === "string" && value.log_directory.trim()
-      ? value.log_directory.trim()
+    log_directory: typeof value.log_directory === "string"
+      ? sanitizeDirectoryPath(value.log_directory)
       : defaultConfig.log_directory,
     log_count_limit: [10, 20, 50, 100].includes(maxLogs) ? maxLogs : defaultConfig.log_count_limit,
     free_space_threshold_mb: Number.isFinite(freeMb) && freeMb >= 1 ? Math.floor(freeMb) : defaultConfig.free_space_threshold_mb,
@@ -622,8 +634,16 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     const form = await req.formData();
     const file = form.get("file");
     if (!(file instanceof File)) return json({ ok: false, message: "Missing ESI/XML file" }, { status: 400 });
+    const ext = extname(file.name).toLowerCase();
+    if (ext !== ".xml" && ext !== ".esi") {
+      return json({ ok: false, message: "Invalid file extension. Only .xml and .esi are allowed." }, { status: 400 });
+    }
+    const base = basename(file.name, ext).replace(/[^A-Za-z0-9_-]/g, "_");
+    if (!base) {
+      return json({ ok: false, message: "Invalid filename" }, { status: 400 });
+    }
+    const clean = base + ext;
     await mkdir("/etc/ethercat/esi", { recursive: true });
-    const clean = basename(file.name).replace(/[^A-Za-z0-9._-]/g, "_");
     await Bun.write(`/etc/ethercat/esi/${clean}`, file);
     return json({ ok: true, name: clean });
   }
