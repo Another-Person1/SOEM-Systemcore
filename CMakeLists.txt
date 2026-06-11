@@ -10,6 +10,6 @@ if(NOT DEFINED CMAKE_TOOLCHAIN_FILE
   set(CMAKE_CXX_COMPILER "${EC_SYSTEMCORE_AARCH64_CXX_COMPILER}" CACHE FILEPATH "" FORCE)
 endif()
 
-project(ec-systemcore VERSION 1.0.0 LANGUAGES C CXX)
+project(ec-systemcore VERSION 2026.0.1 LANGUAGES C CXX)
 
 add_subdirectory(daemon)

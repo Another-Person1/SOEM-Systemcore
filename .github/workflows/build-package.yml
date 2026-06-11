@@ -5,13 +5,17 @@ on:
     branches:
       - main
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  PKG_VERSION: v2026.0.1
+
 jobs:
   build-ipk:
     runs-on: ubuntu-latest
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
 
@@ -58,7 +62,7 @@ jobs:
           ./scripts/build_ipk.sh
 
       - name: Upload IPK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
-          name: ec-systemcore-ipk
-          path: dist/*.ipk
+          name: ec-systemcore
+          path: dist/ec-systemcore.ipk

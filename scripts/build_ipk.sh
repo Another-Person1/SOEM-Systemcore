@@ -3,10 +3,11 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PKG_NAME="ec-systemcore"
-PKG_VERSION="${PKG_VERSION:-1.0.0}"
+PKG_VERSION="${PKG_VERSION:-v2026.0.1}"
 readonly PKG_ARCH="arm64"
 STAGE_DIR="${STAGE_DIR:-${ROOT_DIR}/ipk_stage}"
 DIST_DIR="${DIST_DIR:-${ROOT_DIR}/dist}"
+FINAL_IPK_NAME="${FINAL_IPK_NAME:-ec-systemcore.ipk}"
 DASHBOARD_DIR="${ROOT_DIR}/dashboard"
 DASHBOARD_OUT="${DASHBOARD_DIR}/dist"
 CONTROL_DIR="${ROOT_DIR}/CONTROL"
@@ -109,3 +110,12 @@ install -m 0755 "${CONTROL_DIR}/prerm" "${STAGE_DIR}/CONTROL/prerm"
 
 chmod 0755 "${STAGE_DIR}/CONTROL/postinst" "${STAGE_DIR}/CONTROL/prerm"
 opkg-build "${STAGE_DIR}" "${DIST_DIR}"
+generated_ipk="${DIST_DIR}/${PKG_NAME}_${PKG_VERSION}_${PKG_ARCH}.ipk"
+final_ipk_path="${DIST_DIR}/${FINAL_IPK_NAME}"
+
+if [[ ! -f "${generated_ipk}" ]]; then
+  echo "error: expected generated package '${generated_ipk}' was not created." >&2
+  exit 1
+fi
+
+mv -f "${generated_ipk}" "${final_ipk_path}"

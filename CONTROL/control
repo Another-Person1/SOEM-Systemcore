@@ -1,5 +1,5 @@
 Package: ec-systemcore
-Version: 1.0.0
+Version: v2026.0.1
 Architecture: arm64
 Maintainer: ec-systemcore maintainers
 Depends: systemd, bun

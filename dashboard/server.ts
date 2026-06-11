@@ -1,8 +1,8 @@
 import { mkdir, readdir, stat, statfs, unlink } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 
-const DASHBOARD_VERSION = "2026.0.1";
-const DAEMON_VERSION = "2026.1.0";
+const DASHBOARD_VERSION = "v2026.0.1";
+const DAEMON_VERSION = "v2026.0.1";
 const DEFAULT_PORT = 80;
 const requestedPort = Number(Bun.env.PORT ?? DEFAULT_PORT);
 const PORT = Number.isInteger(requestedPort) && requestedPort > 0 && requestedPort <= 65535
