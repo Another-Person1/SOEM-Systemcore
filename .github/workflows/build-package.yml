@@ -35,11 +35,12 @@ jobs:
         uses: oven-sh/setup-bun@v2
 
       - name: Configure daemon
+        env:
+          CC: aarch64-linux-gnu-gcc
+          CXX: aarch64-linux-gnu-g++
         run: |
           cmake -S . -B build/daemon -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
-            -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
             -DCMAKE_SYSTEM_NAME=Linux \
             -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
             -DLIMELIGHT_EC_WITH_WPILIB=OFF \
