@@ -1,0 +1,14 @@
+[Unit]
+Description=ec-systemcore EtherCAT MainDevice Daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/ec-systemcore-daemon
+Restart=on-failure
+RestartSec=2
+User=root
+
+[Install]
+WantedBy=multi-user.target

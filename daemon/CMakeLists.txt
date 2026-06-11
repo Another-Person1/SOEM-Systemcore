@@ -8,7 +8,7 @@ if(NOT DEFINED CMAKE_TOOLCHAIN_FILE
   set(CMAKE_CXX_COMPILER aarch64-linux-gnu-g++ CACHE FILEPATH "" FORCE)
 endif()
 
-project(limelight_ethercat_maindevice_daemon LANGUAGES C CXX)
+project(ec-systemcore-daemon VERSION 1.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -22,24 +22,27 @@ if(LIMELIGHT_EC_FULLY_STATIC AND UNIX)
   set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
 endif()
 
-get_filename_component(SOEM_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+get_filename_component(SOEM_ROOT "${CMAKE_CURRENT_LIST_DIR}/../third_party/SOEM" ABSOLUTE)
 
 if(NOT TARGET soem)
   set(SOEM_BUILD_SAMPLES OFF CACHE BOOL "" FORCE)
-  add_subdirectory("${SOEM_ROOT}" "${CMAKE_CURRENT_BINARY_DIR}/soem")
+  add_subdirectory("../third_party/SOEM" "${CMAKE_CURRENT_BINARY_DIR}/third_party/SOEM")
 endif()
 
-add_executable(ec-systemcore-maindevice
+add_executable(ec-systemcore-daemon
   src/main.cpp
 )
 
-target_include_directories(ec-systemcore-maindevice PRIVATE
+target_include_directories(ec-systemcore-daemon PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/include"
+  "${CMAKE_CURRENT_LIST_DIR}/../third_party/SOEM"
+  "${CMAKE_CURRENT_LIST_DIR}/../third_party/SOEM/soem"
+  "${CMAKE_CURRENT_LIST_DIR}/../third_party/SOEM/osal"
 )
 
 find_package(Threads REQUIRED)
 
-target_link_libraries(ec-systemcore-maindevice PRIVATE
+target_link_libraries(ec-systemcore-daemon PRIVATE
   soem
   Threads::Threads
 )
@@ -49,31 +52,31 @@ if(LIMELIGHT_EC_WITH_WPILIB)
   find_package(wpiutil CONFIG REQUIRED)
 
   if(TARGET ntcore::ntcore)
-    target_link_libraries(ec-systemcore-maindevice PRIVATE ntcore::ntcore)
+    target_link_libraries(ec-systemcore-daemon PRIVATE ntcore::ntcore)
   elseif(TARGET ntcore)
-    target_link_libraries(ec-systemcore-maindevice PRIVATE ntcore)
+    target_link_libraries(ec-systemcore-daemon PRIVATE ntcore)
   else()
     message(FATAL_ERROR "ntcore was found, but no ntcore CMake target is available")
   endif()
 
   if(TARGET wpiutil::wpiutil)
-    target_link_libraries(ec-systemcore-maindevice PRIVATE wpiutil::wpiutil)
+    target_link_libraries(ec-systemcore-daemon PRIVATE wpiutil::wpiutil)
   elseif(TARGET wpiutil)
-    target_link_libraries(ec-systemcore-maindevice PRIVATE wpiutil)
+    target_link_libraries(ec-systemcore-daemon PRIVATE wpiutil)
   else()
     message(FATAL_ERROR "wpiutil was found, but no wpiutil CMake target is available")
   endif()
 
-  target_compile_definitions(ec-systemcore-maindevice PRIVATE
+  target_compile_definitions(ec-systemcore-daemon PRIVATE
     LIMELIGHT_EC_WITH_WPILIB=1
   )
 else()
-  target_compile_definitions(ec-systemcore-maindevice PRIVATE
+  target_compile_definitions(ec-systemcore-daemon PRIVATE
     LIMELIGHT_EC_WITH_WPILIB=0
   )
 endif()
 
-target_compile_options(ec-systemcore-maindevice PRIVATE
+target_compile_options(ec-systemcore-daemon PRIVATE
   -Wall
   -Wextra
   -Wpedantic
@@ -81,13 +84,14 @@ target_compile_options(ec-systemcore-maindevice PRIVATE
   -Wshadow
 )
 
-target_link_options(ec-systemcore-maindevice PRIVATE
+target_link_options(ec-systemcore-daemon PRIVATE
   -static-libgcc
   -static-libstdc++
 )
 
 if(LIMELIGHT_EC_FULLY_STATIC)
-  target_link_options(ec-systemcore-maindevice PRIVATE -static)
+  target_link_options(ec-systemcore-daemon PRIVATE -static)
 endif()
 
-install(TARGETS ec-systemcore-maindevice DESTINATION sbin)
+install(TARGETS ec-systemcore-daemon RUNTIME DESTINATION /usr/bin)
+install(FILES ec-systemcore.service DESTINATION /etc/systemd/system)

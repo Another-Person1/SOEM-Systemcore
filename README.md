@@ -1,6 +1,6 @@
 # EC-Systemcore (UNOFFICIAL)
 > [!NOTE]
-> * This is **unofficial**, very **experimental**, and **not finished**. As of now, the prepackaged .ipk isn't completed yet.
+> * This is **unofficial**, very **experimental**, and **not finished**.
 > * I **don't claim ownership** of any third party trademarks or copyright mentioned here.
 > * This repo will be optimized for the Limelight Systemcore, potentially other RPi 5 platforms might work but it's not guaranteed and thats not a priority.
 > * **The code here isn't compatible with legacy platforms** such as RoboRIO 1/2, Control Hub, or other legacy platforms.
@@ -10,18 +10,22 @@
 
 This repository is an **unofficial** attempt to add EtherCAT into Systemcore. In theory high speed EtherCAT communication can be unlocked by attaching a USB-Ethernet adapter (100 MBPS or above, gigabit is ideal) to any one of the Systemcore's 4 USB 3.0 ports, reducing CAN-FD bus usage while unlocking new possibilities for competition robotics.
 
-This is a fork of the **Simple Open EtherCAT Master (SOEM)** library, specifically ported and optimized to run natively on the **Limelight Systemcore** Pi CM5 based architecture for high-performance robotics communication.
+This project packages a custom EtherCAT MainDevice daemon and dashboard around the **Simple Open EtherCAT Master (SOEM)** library for the Raspberry Pi Compute Module 5 ARM64 architecture.
 
 ---
 
 ## Systemcore Extension Suite
 
-Alongside the standard core SOEM library, this repository houses an integrated open-source master-side pipeline located in the root subdirectories:
+This repository is organized around a custom system package and an isolated upstream SOEM dependency:
 
-*   **`/daemon`**: A high-performance, C++ based background service that bridges standard Linux network sockets to a local Unix Domain Socket (`/var/run/ledcore.sock`). It features automated self-healing link recovery state machines to natively handle physical USB-to-Ethernet hardware disconnects smoothly under the hood without interrupting the student-facing robot code.
-*   **`/dashboard`**: A lightweight, low-overhead diagnostic web interface that runs natively on the Systemcore, allowing teams to monitor EtherCAT subdevice connection status, operational states, and packet health in real time via a standard web browser in the pit lane.
+*   **`/daemon`**: A C++17 ARM64 Linux daemon built as `/usr/bin/ec-systemcore-daemon` and installed with `ec-systemcore.service`.
+*   **`/dashboard`**: A Bun/TypeScript backend with a vanilla JavaScript frontend for the local diagnostic interface.
+*   **`/third_party/SOEM`**: The isolated SOEM source tree, intended to be managed as a Git submodule.
+*   **`/scripts`**: Release automation, including `build_ipk.sh` for opkg-compatible package generation.
 
 The entire suite is compiled together via the top-level CMake configuration and packaged as a standalone binary system installation file (`ec-systemcore.ipk`).
+
+The daemon must remain a Black Channel routing component and must not implement custom heartbeat, watchdog, or FSoE safety behavior. Safety behavior belongs in certified EtherCAT components and ETG-defined mechanisms, not in this package.
 
 ---
 

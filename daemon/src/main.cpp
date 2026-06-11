@@ -63,7 +63,7 @@ namespace limelight_ec {
 namespace {
 
 constexpr const char* kConfigPath = "/etc/ethercat/ec-configuration.json";
-constexpr const char* kSocketPath = "/var/run/ethercat_maindevice.sock";
+constexpr const char* kSocketPath = "/var/run/ec-systemcore.sock";
 constexpr const char* kLogDirectory = "/var/log/ethercat";
 constexpr int64_t kDefaultCyclePeriodUs = 5000;
 constexpr int kSubDeviceMonitorTimeoutUs = 500;
@@ -393,10 +393,10 @@ class Telemetry final {
 #if LIMELIGHT_EC_WITH_WPILIB
     instance_ = nt::NetworkTableInstance::GetDefault();
     if (!config_.nt4Server.empty()) {
-      instance_.StartClient4("ec-systemcore-maindevice");
+      instance_.StartClient4("ec-systemcore-daemon");
       instance_.SetServer(config_.nt4Server.c_str());
     } else if (config_.nt4Team > 0) {
-      instance_.StartClient4("ec-systemcore-maindevice");
+      instance_.StartClient4("ec-systemcore-daemon");
       instance_.SetServerTeam(config_.nt4Team);
     } else {
       instance_.StartServer();

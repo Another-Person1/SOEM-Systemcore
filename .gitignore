@@ -1,5 +1,9 @@
 build*/
 install
+dist/
+ipk_stage/
+dashboard/dist/
+dashboard/node_modules/
 *~
 /doc/latex
 /doc/html

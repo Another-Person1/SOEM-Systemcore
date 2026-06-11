@@ -7,7 +7,7 @@ const DEFAULT_PORT = 80;
 const PORT = Number(Bun.env.PORT ?? DEFAULT_PORT);
 const PUBLIC_DIR = join(import.meta.dir, "public");
 const CONFIG_PATH = Bun.env.EC_DASHBOARD_CONFIG ?? "/etc/ethercat/ec-configuration.json";
-const SOCKET_PATH = Bun.env.EC_DASHBOARD_SOCKET ?? "/var/run/ethercat_maindevice.sock";
+const SOCKET_PATH = Bun.env.EC_DASHBOARD_SOCKET ?? "/var/run/ec-systemcore.sock";
 const RESTRICTED_INTERFACES = new Set(["eth0", "wlan0", "usb0", "lo"]);
 
 type InterfaceMapping = {
@@ -441,9 +441,9 @@ async function systemInfo() {
 
 async function runSystemRestart(target: string) {
   const serviceMap: Record<string, string[]> = {
-    daemon: ["ec_maindevice"],
+    daemon: ["ec-systemcore"],
     dashboard: ["ec_dashboard"],
-    all: ["ec_maindevice", "ec_dashboard"]
+    all: ["ec-systemcore", "ec_dashboard"]
   };
   const services = serviceMap[target];
   if (!services) return { ok: false, message: "Unknown restart target" };

@@ -49,7 +49,7 @@ Each entry maps a logical name such as `LED_Trunk` to a physical Linux interface
 The Unix domain socket is:
 
 ```text
-/var/run/ethercat_maindevice.sock
+/var/run/ec-systemcore.sock
 ```
 
 It uses `SOCK_SEQPACKET`, non-blocking mode, and broadcasts this exact 128-byte packed status packet every 200 ms:
